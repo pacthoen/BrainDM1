@@ -34,6 +34,13 @@ conda create -p r-env -c r -c bioconda -c conda-forge git rstudio r-base r-tidyr
 
 4. Unzip annotation files: `gzip -d lib/SE.hg38.annotated.gff3.gz lib/gencode.v26.annotation.collapsed.gtf.gz`
 
+5. Run the following scripts in this order:
+   1. [`scripts/prepareSampleMetadata.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/prepareSampleMetadata.R): Combines metadata for all selected samples into one table
+   2. [`scripts/prepareSummarizedData.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/prepareSummarizedData.R): Creates a matrix of exon inclusion data for all selected samples 
+   3. [`scripts/comparePSI.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/comparePSI.R): Performs a group comparison of exon inclusion for all exon-skipping events
+
+6. Now you can run any script in the `scripts/figure` or `scripts/tables` directory to reproduce the unedited content of the publication
+
 ## Overview of directories and content
 
 | Directory     | Content                                                                                       |
