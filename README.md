@@ -26,15 +26,16 @@ Data:
 
 2. Navigate to the repository: `cd BrainDM1`
 
-3. Create conda environments for data processing and analysis.
+3. Create and activate conda environment with all R package dependencies
 ```
-# create conda R environment 
 conda create -p r-env -c r -c bioconda -c conda-forge git rstudio r-base r-tidyr r-dplyr r-stringr r-purrr r-ggplot2 r-corrplot  bioconductor-rtracklayer bioconductor-biomaRt bioconductor-edgeR r-matrixTests r-psych r-data.table r-dunn.test r-cairo r-statmod r-gtools r-ppcor r-argparse r-r.utils r-venndiagram r-cowplot r-gghighlight r-ggrepel  r-ggpubr
+
+conda activate r-env
 ```
 
 4. Unzip annotation files: `gzip -d lib/SE.hg38.annotated.gff3.gz lib/gencode.v26.annotation.collapsed.gtf.gz`
 
-5. Run the following scripts in this order:
+5. Run the following R scripts in this order:
    1. [`scripts/prepareSampleMetadata.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/prepareSampleMetadata.R): Combines metadata for all selected samples into one table
    2. [`scripts/prepareSummarizedData.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/prepareSummarizedData.R): Creates a matrix of exon inclusion data for all selected samples 
    3. [`scripts/comparePSI.R`](https://github.com/pacthoen/BrainDM1/blob/main/scripts/comparePSI.R): Performs a group comparison of exon inclusion for all exon-skipping events
