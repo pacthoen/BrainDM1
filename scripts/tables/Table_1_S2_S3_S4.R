@@ -1,6 +1,6 @@
-########################
-### Table_S2_S3_S4.R ###
-########################
+##########################
+### Table_1_S2_S3_S4.R ###
+##########################
 
 suppressPackageStartupMessages( library(data.table) )
 suppressPackageStartupMessages( library(stringr) )
@@ -98,6 +98,19 @@ sigEvents_overlap <- cbind(
 sigEvents_overlap$Length_se_divisible_by_three <- ifelse((sigEvents_overlap$Length_se %% 3) == 0, "Yes", "No")
 
 fwrite(sigEvents_overlap, "results/Table_S4.csv")
+
+# summarized overview table for inclusion in manuscript
+sigEvents_summary <- sigEvents_overlap %>%
+  dplyr::arrange(desc(DM1_inclusion), order(gtools::mixedorder(Chr)), Start_se, End_se, Strand) %>%
+  dplyr::mutate(
+    Event = SE.event,
+    `Skipped exon coordinates` = paste0(Chr, ":", Start_se, "-", End_se),
+    Length = Length_se,
+    `Inclusion in DM1` = dplyr::recode(DM1_inclusion, "+" = "Increased", "-" = "Decreased")) %>%
+  dplyr::select(Event, `Skipped exon coordinates`, Length, `Inclusion in DM1`)
+
+fwrite(sigEvents_summary, "results/Table_1.csv")
+
 
 # ### create tables with hg19 coordinates ########
 # 
