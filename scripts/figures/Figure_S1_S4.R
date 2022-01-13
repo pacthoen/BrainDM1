@@ -1,5 +1,5 @@
 ######################
-### Figure_S1_S3.R ###
+### Figure_S1_S4.R ###
 ######################
 
 suppressPackageStartupMessages( library(data.table) )
@@ -188,6 +188,6 @@ boxplots_GTEx <- makeBoxplot(
 )
 boxplots_GTEx
 
-ggsave2(filename = "results/Figure_S3.pdf", width = 10, height = 8, dpi = 300)
+ggsave2(filename = "results/Figure_S4.pdf", width = 10, height = 8, dpi = 300)
 
 

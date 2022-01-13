@@ -1,6 +1,6 @@
-#####################
-### Figures_S11.R ###
-#####################
+####################
+### Figure_S11.R ###
+####################
 
 suppressPackageStartupMessages( library(data.table) )
 suppressPackageStartupMessages( library(stringr) )
@@ -8,10 +8,8 @@ suppressPackageStartupMessages( library(dplyr) )
 suppressPackageStartupMessages( library(tidyr) )
 suppressPackageStartupMessages( library(ggplot2) )
 suppressPackageStartupMessages( library(cowplot) )
-suppressPackageStartupMessages( library(corrplot) )
-suppressPackageStartupMessages( library(ppcor) )
+suppressPackageStartupMessages( library(ggcorrplot) )
 suppressPackageStartupMessages( library(RColorBrewer) )
-suppressPackageStartupMessages( library(ggpubr) )
 suppressPackageStartupMessages( library(extrafonts) )
 
 colPal <- list(Blue = "#003366", 
@@ -24,184 +22,135 @@ colPal <- list(Blue = "#003366",
 
 theme_set(theme_classic(base_family = "Arial"))
 
-### LOAD DATA ##########
+# plotting function
+makeCorrplot <- function(corrMat, pMat, title = "", highlight = NULL, wCoeff=F){
+  
+  if( wCoeff == TRUE ){
+    pch <- ""
+    
+  } else {
+    # little hack to allow labeling of sig. correlations (ggcorrplot's default can only label insig. correlations)
+    pMat <- ifelse(pMat < 0.05, 1, 0)
+    pch <- "*"
+  }
+
+  fontColor <- rep("Black", ncol(corrMat))
+  fontColor[highlight] <- "Black" # colPal$AccentYellow (do not highlight these splicing events)
+  
+  corrPlot <- corrMat %>% 
+    ggcorrplot(
+      method = "square", type = "full", ggtheme = theme_classic(),
+      p.mat = pMat, sig.level = 0.05, lab = wCoeff, lab_size = 2, pch = pch, pch.cex = 3, 
+      outline.color = "white", colors = c(colPal$Red, "White", colPal$Blue),
+      tl.srt = 60) +
+    ggtitle(title) +
+    theme_classic() +
+    theme(
+      title = element_text(size = 12),
+      axis.line = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      axis.text.x = element_text(angle = 60),
+      axis.text = element_text(hjust = 1, size = 12, color = fontColor),
+                               # color = c(rep("Black", sum(high_conf_events$DM1_inclusion == "-")),
+                               #           rep(colPal$MediumBlue, sum(high_conf_events$DM1_inclusion == "+")))),
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 12),
+      legend.key.size = unit(1, "cm")) +
+    scale_fill_gradientn(name = "Corr", 
+                         colors = colorRampPalette(c(colPal$Red, "White", colPal$Blue))(100),
+                         limits = c(-1.0, 1.0))
+  
+  return(corrPlot)
+} 
+
+### LOAD DATA ###########
+
+comparison_results <- fread("data/BrainSpan_Otero_PSI_comparison_results.csv")
+
+psi_data <- fread("data/psi_data.csv")
 
 splicingFactors <- fread("lib/splicing_factors.txt") %>% 
-  dplyr::filter(str_detect(geneSymbol, "MBNL|CELF"))
+  dplyr::filter(geneSymbol %in% c("CELF1", "MBNL1", "MBNL2"))
+
+high_conf_events <- fread("data/high_confidence_events.csv")
+
+sample_metadata <- fread("data/sample_metadata.csv")
 
 log2CPM_data <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
   dplyr::filter(geneID %in% splicingFactors$geneID)
 
-group_levels <- c("Male-Prenatal", "Female-Prenatal", "Male-Postnatal", "Female-Postnatal", "Male-DM1", "Female-DM1", "Male-Unaffected", "Female-Unaffected")
+### DATA WRANGLING ##########
 
-BrainSpan_log2CPM <- log2CPM_data %>%
-  dplyr::filter(dataset == "BrainSpan") %>%
-  dplyr::mutate(
-    group = paste(sex, group, sep = "-"),
-    group = factor(group, levels = group_levels),    
-    age = age_in_days)
+# create table with filtered results
+results_filtered <- comparison_results %>% 
+  dplyr::filter(
+    p.val_DM1_CTRL < 0.01,
+    abs(dPSI_DM1_CTRL) > 0.2,
+    !(event_id %in% high_conf_events$event_id)
+  )
+
+# use gene name as SE_event_name 
+results_filtered$SE_event_name <- results_filtered$gene_name
+
+# add letters to duplicate genes
+duplicates <- unique(results_filtered$SE_event_name[duplicated(results_filtered$SE_event_name)])
+for(duplicate in duplicates){
+  i <- which(results_filtered$SE_event_name == duplicate)
+  results_filtered$SE_event_name[i] <- paste0(results_filtered$SE_event_name[i], letters[seq(i)])
+}
+
+# filter complete psi data for high confidence events
+psi_data_filtered <- psi_data %>%
+  dplyr::filter(eventID %in% results_filtered$event_id) %>%
+  data.table::melt(variable.name = "sampleID", value.name = "exonInclusion", id.vars = "eventID") %>%
+  merge(y = sample_metadata, by = "sampleID") %>%
+  dplyr::mutate(SE_event_name = results_filtered$SE_event_name[ match(eventID, results_filtered$event_id)])
+
+Otero_psi <- psi_data_filtered %>%
+  dplyr::filter(dataset == "Otero et al. (2021)") %>%
+  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
 Otero_log2CPM <- log2CPM_data %>%
   dplyr::filter(dataset == "Otero et al. (2021)") %>%
-  dplyr::mutate(
-    group = paste(sex, group, sep = "-"),
-    group = factor(group, levels = group_levels)
-  )
+  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
-### SPLICING FACTORS OVER AGE ###########
+### CORRELATION BETWEEN EXONS AND SPLICING FACTORS ##############
 
-agePlot <- function(data, y_max = 0){
-  data %>%
-    ggplot(aes(y = log2CPM, x = log(age))) +
-    geom_smooth(method = "auto", formula = y ~ x, se = FALSE, aes(color = sex)) +
-    ylim(0, y_max) +
-    theme_classic() +
-    theme(text = element_text(size = 12), 
-          strip.text.x = element_blank(),
-          strip.background =element_rect(color="white", fill="white"),
-          axis.text.x = element_text(angle = -60, hjust = 0),
-          legend.key.size = unit(1.5, "cm")) +
-    labs(color = "") +
-    ylab("log2(CPM)") + xlab("log10(Age)") + 
-    scale_color_manual(values = c(colPal$MediumBlue, colPal$Grey)) +
-    scale_x_continuous(breaks = c(log(90), log(280), log(3 * 365 + 280), 
-                                  log(10 * 365 + 280), log(20 * 365 + 280)), 
-                       labels = c("3 Mos", "Birth", "3 Yrs", "10 Yrs", "20 Yrs")) +
-    facet_wrap(~ geneSymbol, ncol = 4, scales = "free_y")
-}
+# get logCPM values of splicing factor genes
+Otero_factorExpr <- Otero_log2CPM %>% 
+  dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
+  spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
 
-ageplots <- list()
+# get exon inclusion for DM1/brain related exons
+Otero_exonExpr <- Otero_psi %>% 
+  dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
+  spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
 
-for(gene in c("CELF1", "MBNL1", "MBNL2")){
-  
-  p <- BrainSpan_log2CPM %>%
-    filter(geneSymbol == gene) %>%
-    agePlot(y_max = 10)
-  ageplots <- append(ageplots, list(p))
-}
+# get events with increased and decreased exon inclusion
+events_increased <- results_filtered$SE_event_name[results_filtered$DM1_inclusion == "+"]
+events_decreased <- results_filtered$SE_event_name[results_filtered$DM1_inclusion == "-"]
 
-### MORE STATISTICS ######
+# correlate logCPM values of splicing factors with exon fractions of DM1 exons
+Otero_corr_increased <- psych::corr.test(Otero_factorExpr, Otero_exonExpr[, events_increased], method = "spearman", adjust = "fdr")
+Otero_corr_decreased <- psych::corr.test(Otero_factorExpr, Otero_exonExpr[, events_decreased], method = "spearman", adjust = "fdr")
 
-df <- bind_rows(BrainSpan_log2CPM, Otero_log2CPM)
+# hierarchical clustering
+increased_clustered <- hclust(dist(1 - t(Otero_corr_increased$r), diag = T, upper = T))
+decreased_clustered <- hclust(dist(1 - t(Otero_corr_decreased$r), diag = T, upper = T))
 
-stat_results <- compare_means(log2CPM ~ group, df, group.by = c("geneSymbol", "dataset"), p.adjust.method = "fdr")
-stat_results$p.adj.sig <- gtools::stars.pval(stat_results$p.adj)
-stat_results$p.adj.sig[!str_detect(stat_results$p.adj.sig, "\\*")] <- "ns"
+# change order based on clustering
+Otero_corr_increased$r <- Otero_corr_increased$r[, colnames(Otero_corr_increased$r)[increased_clustered$order]]
+Otero_corr_decreased$r <- Otero_corr_decreased$r[, colnames(Otero_corr_decreased$r)[decreased_clustered$order]]
 
-# filter for comparisons of interest
-stat_results <- dplyr::filter(stat_results, 
-                              group1 == "Male-Prenatal" & group2 == "Female-Prenatal" |
-                                group1 == "Male-Postnatal" & group2 == "Female-Postnatal" |
-                                group1 == "Male-DM1" & group2 == "Female-DM1" |
-                                group1 == "Male-Unaffected" & group2 == "Female-Unaffected")
+### PLOTTING ##############
 
-### BOXPLOTS #####
+Otero.corrPlot.increased <- makeCorrplot(Otero_corr_increased$r, Otero_corr_increased$p, "Increased in DM1", wCoef = F)
+Otero.corrPlot.decreased <- makeCorrplot(Otero_corr_decreased$r, Otero_corr_decreased$p, "Decreased in DM1", wCoef = F)
 
-# function to plot boxplots
-exonBoxplot <- function(data, title = "", colors = NULL, dataset_ = NULL, sig_y_pos = 300){
-  data %>%
-    ggboxplot(y = "log2CPM", x = "group", fill = "group") +
-    xlab("") + ylab("log2(CPM)") +
-    ggtitle(title) +
-    scale_y_continuous(breaks = c(0, 2.5, 5, 7.5, 10), limits = c(0, 10)) +
-    scale_fill_manual(values = colors) +
-    theme_classic() +
-    theme(
-      text = element_text(size = 12),
-      legend.title = element_blank(),
-      legend.key.size = unit(1, "cm"),
-      legend.text = element_text(size = 10),
-      axis.ticks.x = element_blank(),
-      axis.text.x = element_blank(),
-      strip.background = element_rect(color="white", fill="white"),
-      strip.placement = "outside",
-      panel.spacing.y = unit(2, "lines")) +
-    facet_wrap(~ geneSymbol, ncol = 4, strip.position = "top", scales = "free_x") +
-    stat_pvalue_manual(
-      filter(stat_results, 
-             dataset == dataset_,
-             geneSymbol %in% data$geneSymbol), 
-      label = "p.adj.sig", y.position = sig_y_pos)
-}
+Otero.corrPlot.increased
+ggsave2(filename = "results/Figure_S11a.pdf", width = 8, height = 10, dpi = 300)
 
-df <- bind_rows(BrainSpan_log2CPM, Otero_log2CPM)
+Otero.corrPlot.decreased
+ggsave2(filename = "results/Figure_S11b.pdf", width = 8, height = 12, dpi = 300)
 
-plots <- data.frame(
-  dataset = rep(c("Otero et al. (2021)", "BrainSpan"), 3), 
-  gene = rep(c("CELF1", "MBNL1", "MBNL2"), each = 2),
-  ylim = log2(rep(c(470, 350, 450), each = 2)),
-  sig_pos = c(9, 9.5, 9, 7.5, 9.5, 9)
-)
-
-boxplots <- list()
-
-for(i in 1:nrow(plots)){
-  palette <- switch(as.character(plots$dataset[i]),
-                          "Otero et al. (2021)" = c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3"),
-                          "BrainSpan" = c("#A6D854", "#FFD92F", "#E5C494", "#B3B3B3")
-  )
-  
-  p <- df %>%
-    filter(
-      dataset == plots$dataset[i],
-      geneSymbol == plots$gene[i]
-    ) %>%
-    exonBoxplot(
-      dataset = plots$dataset[i],
-      colors = palette,
-      sig_y_pos = plots$sig_pos[i]
-    )
-  
-  boxplots <- append(boxplots, list(p))
-}
-
-### ARRANGE FIGURE ###########
-
-l_Otero <- get_legend(boxplots[[1]])
-l_BrainSpan <- get_legend(boxplots[[2]])
-l_age <- get_legend(ageplots[[1]])
-
-plot_grid(
-  plot_grid(
-    boxplots[[1]] + theme(legend.position = "none"),
-    boxplots[[3]] + theme(legend.position = "none"),
-    boxplots[[5]] + theme(legend.position = "none"),
-    l_Otero, ncol = 4
-  ), plot_grid(
-    boxplots[[2]] + theme(legend.position = "none"),
-    boxplots[[4]] + theme(legend.position = "none"),
-    boxplots[[6]] + theme(legend.position = "none"),
-    l_BrainSpan, ncol = 4
-  ), plot_grid(
-    ageplots[[1]] + theme(legend.position = "none"),
-    ageplots[[2]] + theme(legend.position = "none"),
-    ageplots[[3]] + theme(legend.position = "none"),
-    l_age, ncol = 4
-  ),
-  ncol = 1, labels = "", label_size = 20, rel_heights = c(0.325,0.325,0.35)
-)
-
-ggsave2(filename = "results/Figure_S11.pdf", width = 8, height = 8, dpi = 300)
-
-### COMPUTE LOGFC FOR MBNL1, MBNL2 AND CELF1 EXPRESSION ###
-
-Otero_logFC <- Otero_log2CPM %>%
-  dplyr::filter(geneSymbol %in% c("MBNL1", "MBNL2", "MBNL3", "CELF1")) %>%
-  dplyr::group_by(geneSymbol, group) %>%
-  dplyr::summarise(mean = mean(log2CPM)) %>%
-  tidyr::spread(key = "group", value = "mean") %>%
-  dplyr::mutate(
-    logFC_DM1 = log2(2^`Male-DM1`/2^`Female-DM1`),
-    logFC_Unaffected = log2(2^`Male-Unaffected`/2^`Female-Unaffected`))
-
-BrainSpan_logFC <- BrainSpan_log2CPM %>%
-  dplyr::filter(geneSymbol %in% c("MBNL1", "MBNL2", "MBNL3","CELF1")) %>%
-  dplyr::group_by(geneSymbol, group) %>%
-  dplyr::summarise(mean = mean(log2CPM)) %>%
-  tidyr::spread(key = "group", value = "mean") %>%
-  dplyr::mutate(
-    logFC_Prenatal = log2(2^`Male-Prenatal`/2^`Female-Prenatal`),
-    logFC_Postnatal = log2(2^`Male-Postnatal`/2^`Female-Postnatal`))
-
-Otero_logFC[, c("geneSymbol", "logFC_DM1", "logFC_Unaffected")]
-BrainSpan_logFC[, c("geneSymbol", "logFC_Prenatal", "logFC_Postnatal")]

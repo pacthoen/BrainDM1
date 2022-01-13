@@ -7,8 +7,9 @@ suppressPackageStartupMessages( library(stringr) )
 suppressPackageStartupMessages( library(dplyr) )
 suppressPackageStartupMessages( library(tidyr) )
 suppressPackageStartupMessages( library(ggplot2) )
-suppressPackageStartupMessages( library(ggpubr) )
 suppressPackageStartupMessages( library(cowplot) )
+suppressPackageStartupMessages( library(ggcorrplot) )
+suppressPackageStartupMessages( library(ppcor) )
 suppressPackageStartupMessages( library(RColorBrewer) )
 suppressPackageStartupMessages( library(extrafont) )
 
@@ -22,195 +23,106 @@ colPal <- list(Blue = "#003366",
 
 theme_set(theme_classic(base_family = "Arial"))
 
-### LOAD DATA ############
+# load external functions
+source("scripts/partialCorr.R")
+
+### LOAD DATA ###########
 
 high_conf_events <- fread("data/high_confidence_events.csv")
-psi_data_filtered <- fread("data/psi_data_filtered_annotated.csv") 
 
-group_levels <- c("Male-Prenatal", "Female-Prenatal", "Male-Postnatal", "Female-Postnatal", "Male-DM1", "Female-DM1", "Male-Unaffected", "Female-Unaffected")
+splicingFactors <- fread("lib/splicing_factors.txt") %>% 
+  dplyr::filter(geneSymbol %in% c("CELF1", "MBNL1", "MBNL2"))
 
-BrainSpan_psi <- psi_data_filtered %>% 
-  dplyr::filter(dataset == "BrainSpan") %>%
-  dplyr::mutate(
-    group = paste(sex, group, sep = "-"),
-    group = factor(group, levels = group_levels),
-    age = age_in_days)
+Otero_metadata <- fread("data/sample_metadata.csv") %>%
+  dplyr::filter(dataset == "Otero et al. (2021)")
 
-Otero_psi <- psi_data_filtered %>%
+Otero_psi <- fread("data/psi_data_filtered_annotated.csv") %>%
   dplyr::filter(dataset == "Otero et al. (2021)") %>%
-  dplyr::mutate(
-    group = paste(sex, group, sep = "-"),
-    group = factor(group, levels = group_levels))
+  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
-### STATISTICS #####
+Otero_log2CPM <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
+  dplyr::filter(geneID %in% splicingFactors$geneID) %>%
+  dplyr::filter(dataset == "Otero et al. (2021)") %>%
+  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
-# compute correlation between exon inclusion and donor age
-corrResults <- data.table(matrix(ncol=7,nrow=0))
-for(sex_ in unique(BrainSpan_psi$sex)) {
-  for(event_ in high_conf_events$event_id){
-    data <- filter(BrainSpan_psi, eventID == event_, sex == sex_)
-    results <- cor.test(data$exonInclusion, data$age, method="spearman", exact=F)
-    corrResults <- rbind(corrResults, data.table(event_, 
-                                                 sex_,
-                                                 results$statistic,
-                                                 results$p.value,
-                                                 NA, 
-                                                 results$estimate,
-                                                 results$method), use.names=F)
-  }
-}
-
-colnames(corrResults) <- c("eventID", "sex", "statistic", "p.value", "adj.p.value", "estimate", "method")
-corrResults$adj.p.value <- p.adjust(corrResults$p.value, method = "fdr")
-
-# get highlighted events
-high_conf_events <- arrange(high_conf_events, dPSI_DM1_CTRL)
-highlight_events <- rbind(head(high_conf_events, 4), tail(high_conf_events, 4))
-
-# define order of events based on DM1 inclusion and event name
-order <- highlight_events$SE_event_name[ order(highlight_events$DM1_inclusion, highlight_events$SE_event_name, decreasing = F)]
-highlight_events <- highlight_events[match(order, highlight_events$SE_event_name),]
-
-# filter for highlight events
-BrainSpan_psi <- dplyr::filter(BrainSpan_psi, SE_event_name %in% highlight_events$SE_event_name)
-Otero_psi <- dplyr::filter(Otero_psi, SE_event_name %in% highlight_events$SE_event_name)
-
-# order events in BrainSpan data
-BrainSpan_psi$SE_event_name <- factor(BrainSpan_psi$SE_event_name, levels = order)
-
-# create table for annotation of correlation coefficient
-anno <- data.frame(
-  eventID = highlight_events$event_id,
-  SE_event_name = highlight_events$SE_event_name,
-  sex = c(rep("Male", 8), rep("Female", 8))) %>% 
-  merge(corrResults[, c("eventID", "sex", "estimate")]) %>%
-  dplyr::mutate(label = paste0("R = ", sprintf("%0.3f", round(estimate, digits = 3)))) %>% 
-  dplyr::select(-eventID, -estimate)
-
-### SPLICING OVER AGE #####
-
-exonAgePlot <- function(data){
-  data %>%
-    ggplot(aes(y = exonInclusion, x = log(age))) +
-    geom_smooth(method = "auto", se = FALSE, aes(color = sex)) +
-    theme_classic() +
-    theme(text = element_text(size = 20), 
-          strip.text.x = element_blank(),
-          strip.background =element_rect(color="white", fill="white"),
-          axis.text.x = element_text(angle = -60, hjust = 0),
-          axis.title.y = element_text(angle = 0, vjust = 0.5),
-          legend.key.size = unit(1.5, "cm")) +
-    labs(color = "") +
-    ylab(expression(psi)) + xlab("log10(Age)") + 
-    scale_color_manual(values = c(colPal$MediumBlue, colPal$Grey)) +
-    scale_x_continuous(breaks = c(log(90), log(280), log(3 * 365 + 280), 
-                                  log(10 * 365 + 280), log(20 * 365 + 280)), 
-                       labels = c("3 Mos", "Birth", "3 Yrs", "10 Yrs", "20 Yrs")) +
-    facet_wrap(~ SE_event_name, ncol = 4, scales = "fixed")
-}
-
-BrainSpan.exon.age.increased <- BrainSpan_psi %>%
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "+"]) %>%
-  exonAgePlot()
-
-BrainSpan.exon.age.decreased <- BrainSpan_psi %>%
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "-"]) %>%
-  exonAgePlot()
-
-#### LOAD OTERO DATA ####
-
-# order events in Otero data
-Otero_psi$SE_event_name <- factor(Otero_psi$SE_event_name, levels = order)
-
-### MORE STATISTICS ####
-
-df <- bind_rows(BrainSpan_psi, Otero_psi)
-stat_results <- compare_means(exonInclusion ~ group, df, group.by = c("SE_event_name", "dataset"), p.adjust.method = "fdr")
-stat_results$p.adj.sig <- gtools::stars.pval(stat_results$p.adj)
-stat_results$p.adj.sig[!str_detect(stat_results$p.adj.sig, "\\*")] <- "ns"
-
-# filter for comparisons of interest
-stat_results <- dplyr::filter(stat_results, 
-                              group1 == "Male-Prenatal" & group2 == "Female-Prenatal" |
-                                group1 == "Male-Postnatal" & group2 == "Female-Postnatal" |
-                                group1 == "Male-DM1" & group2 == "Female-DM1" |
-                                group1 == "Male-Unaffected" & group2 == "Female-Unaffected")
-
-### PSI BOXPLOTS ##############
-
-# function to plot boxplots
-exonBoxplot <- function(data, title = "", colors = NULL, dataset_ = NULL){
-  data %>%
-    ggboxplot(y = "exonInclusion", x = "group", fill = "group") +
-    xlab("") + ylab(expression(psi)) +
-    ggtitle(title) +
-    scale_y_continuous(limits=c(0.0,1.2), breaks = seq(0,1,by=0.25)) +
-    scale_fill_manual(values = colors) +
+makeCorrPlots <- function(psi, log2CPM, sampleIDs, title){
+  
+  # get logCPM values of splicing factor genes
+  factorExpr <- log2CPM %>% 
+    filter(sampleID %in% sampleIDs) %>%
+    dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
+    spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
+  
+  # get exon inclusion for DM1/brain related exons
+  exonExpr <- psi %>% 
+    filter(sampleID %in% sampleIDs) %>%
+    dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
+    spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
+  
+  # exons with increased inclusion in DM1 followed by exons with decreased inclusion
+  order <- high_conf_events$SE_event_name[order(high_conf_events$order)]
+  exonExpr <- exonExpr[ , match(order, colnames(exonExpr))]
+  
+  # correlate logCPM values of splicing factors with exon fractions of DM1 exons
+  corr <- psych::corr.test(factorExpr, exonExpr, method = "spearman", adjust = "fdr")
+  
+  # little hack to allow labelling of sig. correlations (ggcorrplot's default can only label insig. correlations)
+  sigMat <- ifelse(corr$p < 0.05, 1, 0)
+  
+  highlightColIndex <- which(colnames(corr$r) %in% high_conf_events$SE_event_name[high_conf_events$DM1_inclusion == "+"])
+  
+  fontColor <- rep("Black", ncol(corr$r))
+  fontColor[highlightColIndex] <- "Black" #colPal$AccentYellow
+  
+  corrPlot <- corr$r %>% 
+    ggcorrplot(
+      method = "square", type = "full", ggtheme = theme_classic(),
+      p.mat = sigMat, sig.level = 0.05, insig = "pch", pch = "*", pch.cex = 3, 
+      outline.color = "white", colors = c(colPal$Red, "White", colPal$Blue), #brewer.pal(n = 3, name = "PuOr"),
+      tl.srt = 60, title = title) +
     theme_classic() +
     theme(
-      text = element_text(size = 20),
-      legend.title = element_blank(),
-      legend.key.size = unit(1, "cm"),
-      legend.text = element_text(size = 18),
-      axis.title.y = element_text(angle = 0, vjust = 0.5),
-      axis.ticks.x = element_blank(),
-      axis.text.x = element_blank(),
-      strip.background = element_rect(color="white", fill="white"),
-      strip.placement = "outside",
-      panel.spacing.y = unit(2, "lines")) +
-    facet_wrap(~ SE_event_name, ncol = 4, strip.position = "top", scales = "free_x") +
-    stat_pvalue_manual(
-      filter(stat_results,
-        dataset == dataset_,
-        SE_event_name %in% data$SE_event_name),
-      label = "p.adj.sig", y.position = 1.1)
+      title = element_text(size = 14),
+      axis.line = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      axis.text.x = element_text(angle = 60),
+      axis.text = element_text(hjust = 1, size = 12, color = fontColor),
+      # color = c(rep("Black", sum(high_conf_events$DM1_inclusion == "-")),
+      #           rep(colPal$MediumBlue, sum(high_conf_events$DM1_inclusion == "+")))),
+      legend.title = element_text(size = 15),
+      legend.text = element_text(size = 15),
+      legend.key.size = unit(1, "cm"))  +
+    scale_fill_gradientn(name = "Corr", 
+                         colors = colorRampPalette(c(colPal$Red, "White", colPal$Blue))(100),
+                         limits = c(-1.0, 1.0))
+  
+  return(corrPlot)
 }
 
-#---BRAINSPAN---#
-BrainSpan.exon.bp.increased <- BrainSpan_psi %>%
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "+"]) %>%
-  exonBoxplot(
-    colors = c("#A6D854", "#FFD92F", "#E5C494", "#B3B3B3"), 
-    dataset = "BrainSpan"
-  )
+Otero.all.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
+                                 Otero_metadata$sampleID, 
+                                 title = "All samples")
 
-BrainSpan.exon.bp.decreased <- BrainSpan_psi %>%
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "-"]) %>%
-  exonBoxplot(
-    colors = c("#A6D854", "#FFD92F", "#E5C494", "#B3B3B3"), 
-    dataset = "BrainSpan"
-  )
+Otero.DM1.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
+                                 Otero_metadata$sampleID[str_which(Otero_metadata$group, "DM1")],
+                                 title = "Only DM1")
 
-#---Otero---#
-Otero.exon.bp.increased <- Otero_psi %>%
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "+"]) %>%
-  exonBoxplot(
-    colors = c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3"), 
-    dataset = "Otero et al. (2021)"
-    )
-
-Otero.exon.bp.decreased <- Otero_psi %>% 
-  filter(SE_event_name %in% highlight_events$SE_event_name[highlight_events$DM1_inclusion == "-"]) %>%
-  exonBoxplot(
-    colors = c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3"),
-    dataset = "Otero et al. (2021)"
-  )
+Otero.CTRL.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
+                                  Otero_metadata$sampleID[str_which(Otero_metadata$group, "Unaffected")],
+                                  title = "Only unaffected")
 
 ### ARRANGE FIGURE ###########
 
-l_Otero <- get_legend(Otero.exon.bp.increased)
-l_BrainSpan <- get_legend(BrainSpan.exon.bp.increased)
-l_age <- get_legend(BrainSpan.exon.age.decreased)
+l1 <- get_legend(Otero.all.plots)
 
-plot_grid(
-  plot_grid(Otero.exon.bp.decreased + theme(legend.position = "none"), l_Otero, 
-            BrainSpan.exon.bp.decreased + theme(legend.position = "none"), l_BrainSpan, 
-            BrainSpan.exon.age.decreased + theme(legend.position = "none"), l_age, 
-            rel_widths = c(0.8,0.2), ncol = 2),
-  plot_grid(Otero.exon.bp.increased + theme(legend.position = "none"), l_Otero, 
-            BrainSpan.exon.bp.increased + theme(legend.position = "none"), l_BrainSpan, 
-            BrainSpan.exon.age.increased + theme(legend.position = "none"), l_age, 
-            rel_widths = c(0.8,0.2), ncol = 2),
-  ncol = 1, labels = "AUTO", label_size = 20, scale = c(0.95,0.95))
+plot_grid(Otero.all.plots + theme(legend.position = "none"),
+          Otero.DM1.plots + theme(legend.position = "none", axis.text.y = element_blank()),
+          Otero.CTRL.plots + theme(legend.position = "none", axis.text.y = element_blank()),
+          l1,
+          labels = c(""), label_size = 20,
+          ncol = 4, nrow = 1, rel_widths = c(1.65,1.025,1.025,0.4), 
+          scale = c(0.9,0.9,0.9,1))
 
-ggsave2(filename = "results/Figure_S10.pdf", width = 12, height = 14, dpi = 300)
+ggsave2(filename = "results/Figure_S10.pdf", width = 12, height = 8, dpi = 300)
+
