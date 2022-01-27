@@ -1,5 +1,5 @@
 #####################
-### Figure_4_S8.R ###
+### Figure_4_S9.R ###
 #####################
 
 suppressPackageStartupMessages( library(data.table) )
@@ -215,5 +215,5 @@ plot_grid(BrainSpan.corrPlot + theme(legend.position = "none"),
           legend,
           ncol = 4, rel_widths = c(1.65,1.025,1.025,0.4), labels = "", label_size = 20, scale = c(0.9,0.9,0.9,1))
 
-ggsave2(filename = "results/Figure_S8.pdf", width = 8, height = 10, dpi = 300)
+ggsave2(filename = "results/Figure_S9.pdf", width = 8, height = 10, dpi = 300)
 

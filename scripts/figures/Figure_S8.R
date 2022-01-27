@@ -1,5 +1,5 @@
 ####################
-### Figures_S7.R ###
+### Figures_S8.R ###
 ####################
 
 suppressPackageStartupMessages( library(data.table) )
@@ -181,7 +181,7 @@ plot_grid(
   ncol = 1, labels = "", label_size = 20, rel_heights = c(0.325,0.325,0.35)
 )
 
-ggsave2(filename = "results/Figure_S7.pdf", width = 8, height = 8, dpi = 300)
+ggsave2(filename = "results/Figure_S8.pdf", width = 8, height = 8, dpi = 300)
 
 ### COMPUTE LOGFC FOR MBNL1, MBNL2 AND CELF1 EXPRESSION ###
 

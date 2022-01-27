@@ -1,5 +1,5 @@
 #######################
-### Figures_S5_S6.R ###
+### Figures_S6_S7.R ###
 #######################
 
 suppressPackageStartupMessages( library(data.table) )
@@ -184,7 +184,7 @@ plot_grid(
   ncol = 2, labels = "", label_size = 20, rel_widths = c(0.8, 0.2), rel_heights = c(0.325,0.325,0.35)
 )
 
-ggsave2(filename = "results/Figure_S5.pdf", width = 10, height = 6, dpi = 300)
+ggsave2(filename = "results/Figure_S6.pdf", width = 10, height = 6, dpi = 300)
 
 plot_grid(
   plot_grid(
@@ -197,5 +197,5 @@ plot_grid(
   ncol = 2, labels = "", label_size = 20, rel_widths = c(0.8, 0.2), rel_heights = c(0.325,0.325,0.35)
 )
 
-ggsave2(filename = "results/Figure_S6.pdf", width = 6, height = 6, dpi = 300)
+ggsave2(filename = "results/Figure_S7.pdf", width = 6, height = 6, dpi = 300)
 

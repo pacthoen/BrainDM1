@@ -1,5 +1,5 @@
 ####################
-### Figure_S11.R ###
+### Figure_S13.R ###
 ####################
 
 suppressPackageStartupMessages( library(data.table) )
@@ -24,26 +24,33 @@ colPal <- list(Blue = "#003366",
 theme_set(theme_classic(base_family = "Arial"))
 
 # load external functions
-source("scripts/partialCorr.R")
+source(paste0(repo_dir, "/analysis/functions/partialCorr.R"))
 
-### LOAD DATA ###########
+### LOAD DATA ##########
 
 high_conf_events <- fread("data/high_confidence_events.csv")
+
+# define order of events based on DM1 inclusion and gene name
+eventOrder <- high_conf_events$SE_event_name[ order(high_conf_events$DM1_inclusion, high_conf_events$SE_event_name, decreasing = T)]
 
 splicingFactors <- fread("lib/splicing_factors.txt") %>% 
   dplyr::filter(geneSymbol %in% c("CELF1", "MBNL1", "MBNL2"))
 
-Otero_metadata <- fread("data/sample_metadata.csv") %>%
-  dplyr::filter(dataset == "Otero et al. (2021)")
+BrainSpan_psi <- fread("data/psi_data_filtered_annotated.csv") %>% 
+  dplyr::filter(dataset == "BrainSpan") %>%
+  dplyr::mutate(
+    group = factor(group, levels = c("Prenatal", "Postnatal")),
+    age = age_in_days)
 
-Otero_psi <- fread("data/psi_data_filtered_annotated.csv") %>%
-  dplyr::filter(dataset == "Otero et al. (2021)") %>%
-  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
-
-Otero_log2CPM <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
+BrainSpan_log2CPM <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
   dplyr::filter(geneID %in% splicingFactors$geneID) %>%
-  dplyr::filter(dataset == "Otero et al. (2021)") %>%
-  dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
+  dplyr::filter(dataset == "BrainSpan") %>%
+  dplyr::mutate(
+    group = factor(group, levels = c("Prenatal", "Postnatal")),
+    age = age_in_days)
+
+BrainSpan_metadata <- fread("data/sample_metadata.csv") %>%
+  dplyr::filter(dataset == "BrainSpan")
 
 makeCorrPlots <- function(psi, log2CPM, sampleIDs, title){
   
@@ -53,17 +60,17 @@ makeCorrPlots <- function(psi, log2CPM, sampleIDs, title){
     dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
     spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
   
-  # get exon inclusion for DM1/brain related exons
+  # get exon inclusion for DM1/brain related events
   exonExpr <- psi %>% 
     filter(sampleID %in% sampleIDs) %>%
     dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
     spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
   
-  # exons with increased inclusion in DM1 followed by exons with decreased inclusion
+  # events with increased inclusion in DM1 followed by events with decreased inclusion
   order <- high_conf_events$SE_event_name[order(high_conf_events$order)]
   exonExpr <- exonExpr[ , match(order, colnames(exonExpr))]
   
-  # correlate logCPM values of splicing factors with exon fractions of DM1 exons
+  # correlate logCPM values of splicing factors with exon fractions of DM1 events
   corr <- psych::corr.test(factorExpr, exonExpr, method = "spearman", adjust = "fdr")
   
   # little hack to allow labelling of sig. correlations (ggcorrplot's default can only label insig. correlations)
@@ -100,29 +107,29 @@ makeCorrPlots <- function(psi, log2CPM, sampleIDs, title){
   return(corrPlot)
 }
 
-Otero.all.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                 Otero_metadata$sampleID, 
-                                 title = "All samples")
+BrainSpan.all.plots <- makeCorrPlots(BrainSpan_psi, BrainSpan_log2CPM, 
+                                     BrainSpan_metadata$sampleID, 
+                                     title = "All samples")
 
-Otero.DM1.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                 Otero_metadata$sampleID[str_which(Otero_metadata$group, "DM1")],
-                                 title = "Only DM1")
+BrainSpan.prenatal.plots <- makeCorrPlots(BrainSpan_psi, BrainSpan_log2CPM, 
+                                          BrainSpan_metadata$sampleID[str_which(BrainSpan_metadata$group, "Prenatal")],
+                                          title = "Only prenatal")
 
-Otero.CTRL.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                  Otero_metadata$sampleID[str_which(Otero_metadata$group, "Unaffected")],
-                                  title = "Only unaffected")
+BrainSpan.postnatal.plots <- makeCorrPlots(BrainSpan_psi, BrainSpan_log2CPM, 
+                                           BrainSpan_metadata$sampleID[str_which(BrainSpan_metadata$group, "Postnatal")],
+                                           title = "Only postnatal")
 
 ### ARRANGE FIGURE ###########
 
-l1 <- get_legend(Otero.all.plots)
+l1 <- get_legend(BrainSpan.all.plots)
 
-plot_grid(Otero.all.plots + theme(legend.position = "none"),
-          Otero.DM1.plots + theme(legend.position = "none", axis.text.y = element_blank()),
-          Otero.CTRL.plots + theme(legend.position = "none", axis.text.y = element_blank()),
+plot_grid(BrainSpan.all.plots + theme(legend.position = "none"),
+          BrainSpan.prenatal.plots + theme(legend.position = "none", axis.text.y = element_blank()),
+          BrainSpan.postnatal.plots + theme(legend.position = "none", axis.text.y = element_blank()),
           l1,
           labels = c(""), label_size = 20,
           ncol = 4, nrow = 1, rel_widths = c(1.65,1.025,1.025,0.4), 
           scale = c(0.9,0.9,0.9,1))
 
-ggsave2(filename = "results/Figure_S11.pdf", width = 12, height = 8, dpi = 300)
+ggsave2(filename = "results/Figure_S13.pdf", width = 12, height = 8, dpi = 300)
 

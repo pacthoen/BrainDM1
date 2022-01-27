@@ -9,9 +9,8 @@ suppressPackageStartupMessages( library(tidyr) )
 suppressPackageStartupMessages( library(ggplot2) )
 suppressPackageStartupMessages( library(cowplot) )
 suppressPackageStartupMessages( library(ggcorrplot) )
-suppressPackageStartupMessages( library(ppcor) )
 suppressPackageStartupMessages( library(RColorBrewer) )
-suppressPackageStartupMessages( library(extrafont) )
+suppressPackageStartupMessages( library(extrafonts) )
 
 colPal <- list(Blue = "#003366", 
                Red = "#E31B23", 
@@ -23,106 +22,226 @@ colPal <- list(Blue = "#003366",
 
 theme_set(theme_classic(base_family = "Arial"))
 
-# load external functions
-source("scripts/partialCorr.R")
+### LOAD DATA ########
 
-### LOAD DATA ###########
+sample_metadata <- fread("data/sample_metadata.csv")
 
 high_conf_events <- fread("data/high_confidence_events.csv")
+
+# define order of events based on DM1 inclusion and gene name
+eventOrder <- high_conf_events$SE_event_name[ order(high_conf_events$DM1_inclusion, high_conf_events$SE_event_name, decreasing = T)]
 
 splicingFactors <- fread("lib/splicing_factors.txt") %>% 
   dplyr::filter(geneSymbol %in% c("CELF1", "MBNL1", "MBNL2"))
 
-Otero_metadata <- fread("data/sample_metadata.csv") %>%
-  dplyr::filter(dataset == "Otero et al. (2021)")
+psi_data_filtered <- fread("data/psi_data_filtered_annotated.csv")
 
-Otero_psi <- fread("data/psi_data_filtered_annotated.csv") %>%
+BrainSpan_psi <- psi_data_filtered %>% 
+  dplyr::filter(dataset == "BrainSpan") %>%
+  dplyr::mutate(
+    group = factor(group, levels = c("Prenatal", "Postnatal")),
+    age = age_in_days)
+
+Otero_psi <- psi_data_filtered %>%
   dplyr::filter(dataset == "Otero et al. (2021)") %>%
   dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
-Otero_log2CPM <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
-  dplyr::filter(geneID %in% splicingFactors$geneID) %>%
+GTEx_psi <- psi_data_filtered %>%
+  dplyr::filter(
+    dataset == "GTEx",
+    tissue == "Frontal Cortex (BA9)") 
+
+log2CPM_data <- fread("data/log2CPM_data_filtered_annotated.csv") %>% 
+  dplyr::filter(geneID %in% splicingFactors$geneID) 
+
+BrainSpan_log2CPM <- log2CPM_data %>%
+  dplyr::filter(dataset == "BrainSpan") %>%
+  dplyr::mutate(
+    group = factor(group, levels = c("Prenatal", "Postnatal")),
+    age = age_in_days)
+
+Otero_log2CPM <- log2CPM_data %>%
   dplyr::filter(dataset == "Otero et al. (2021)") %>%
   dplyr::mutate(group = factor(group, levels = c("DM1", "Unaffected")))
 
-makeCorrPlots <- function(psi, log2CPM, sampleIDs, title){
-  
-  # get logCPM values of splicing factor genes
-  factorExpr <- log2CPM %>% 
-    filter(sampleID %in% sampleIDs) %>%
-    dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
-    spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
-  
-  # get exon inclusion for DM1/brain related exons
-  exonExpr <- psi %>% 
-    filter(sampleID %in% sampleIDs) %>%
-    dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
-    spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
-  
-  # exons with increased inclusion in DM1 followed by exons with decreased inclusion
-  order <- high_conf_events$SE_event_name[order(high_conf_events$order)]
-  exonExpr <- exonExpr[ , match(order, colnames(exonExpr))]
-  
-  # correlate logCPM values of splicing factors with exon fractions of DM1 exons
-  corr <- psych::corr.test(factorExpr, exonExpr, method = "spearman", adjust = "fdr")
-  
-  # little hack to allow labelling of sig. correlations (ggcorrplot's default can only label insig. correlations)
-  sigMat <- ifelse(corr$p < 0.05, 1, 0)
-  
-  highlightColIndex <- which(colnames(corr$r) %in% high_conf_events$SE_event_name[high_conf_events$DM1_inclusion == "+"])
-  
-  fontColor <- rep("Black", ncol(corr$r))
-  fontColor[highlightColIndex] <- "Black" #colPal$AccentYellow
-  
-  corrPlot <- corr$r %>% 
-    ggcorrplot(
-      method = "square", type = "full", ggtheme = theme_classic(),
-      p.mat = sigMat, sig.level = 0.05, insig = "pch", pch = "*", pch.cex = 3, 
-      outline.color = "white", colors = c(colPal$Red, "White", colPal$Blue), #brewer.pal(n = 3, name = "PuOr"),
-      tl.srt = 60, title = title) +
-    theme_classic() +
-    theme(
-      title = element_text(size = 14),
-      axis.line = element_blank(),
-      axis.ticks = element_blank(),
-      axis.title = element_blank(),
-      axis.text.x = element_text(angle = 60),
-      axis.text = element_text(hjust = 1, size = 12, color = fontColor),
-      # color = c(rep("Black", sum(high_conf_events$DM1_inclusion == "-")),
-      #           rep(colPal$MediumBlue, sum(high_conf_events$DM1_inclusion == "+")))),
-      legend.title = element_text(size = 15),
-      legend.text = element_text(size = 15),
-      legend.key.size = unit(1, "cm"))  +
-    scale_fill_gradientn(name = "Corr", 
-                         colors = colorRampPalette(c(colPal$Red, "White", colPal$Blue))(100),
-                         limits = c(-1.0, 1.0))
-  
-  return(corrPlot)
+GTEx_log2CPM <- log2CPM_data %>%
+  dplyr::filter(
+    dataset == "GTEx",
+    tissue == "Frontal Cortex (BA9)")
+
+### CORRELATION BETWEEN EVENTS AND SPLICING FACTORS ##############
+
+# get logCPM values of splicing factor genes
+Otero_factorExpr <- Otero_log2CPM %>% 
+  dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
+  spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
+
+# get exon inclusion for DM1/brain related events
+Otero_exonExpr <- Otero_psi %>% 
+  dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
+  spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
+
+# correlate logCPM values of splicing factors with psi of DM1 events
+Otero_corr <- psych::corr.test(Otero_factorExpr, Otero_exonExpr, method = "spearman", adjust = "fdr")
+
+# hierarchical clustering
+clustered <- hclust(dist(1 - t(Otero_corr$r), diag = T, upper = T))
+
+# change order based on clustering
+eventOrder <- colnames(Otero_corr$r)[clustered$order]
+Otero_corr$r <- Otero_corr$r[, eventOrder]
+Otero_corr$p <- Otero_corr$p[, eventOrder]
+
+events <- c("ADD1", "DMD")
+genes <- c("CELF1","MBNL1", "MBNL2")
+
+anno <- data.frame(SE_event_name = character(), geneSymbol = character(), dataset = character(), label = character())
+
+for(event in events) {
+  for(gene in genes) {
+    anno <- rbind(anno,
+                  data.frame(
+                    SE_event_name = event,
+                    geneSymbol = gene,
+                    dataset = "Otero et al. (2021)",
+                    label = paste0("R = ", sprintf("%0.3f", round(Otero_corr$r[gene, event], digits = 3)))
+                  )
+    )
+  }
 }
 
-Otero.all.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                 Otero_metadata$sampleID, 
-                                 title = "All samples")
+# get logCPM values of splicing factor genes
+BrainSpan_factorExpr <- BrainSpan_log2CPM %>% 
+  dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
+  spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
 
-Otero.DM1.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                 Otero_metadata$sampleID[str_which(Otero_metadata$group, "DM1")],
-                                 title = "Only DM1")
+# get exon inclusion for DM1/brain related events
+BrainSpan_exonExpr <- BrainSpan_psi %>% 
+  dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
+  spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
 
-Otero.CTRL.plots <- makeCorrPlots(Otero_psi, Otero_log2CPM, 
-                                  Otero_metadata$sampleID[str_which(Otero_metadata$group, "Unaffected")],
-                                  title = "Only unaffected")
+# events with increased inclusion in DM1 followed by events with decreased inclusion
+BrainSpan_exonExpr <- BrainSpan_exonExpr[ , match(eventOrder, colnames(BrainSpan_exonExpr))]
 
-### ARRANGE FIGURE ###########
+# correlate logCPM values of splicing factors with psi of DM1 events
+BrainSpan_corr <- psych::corr.test(BrainSpan_factorExpr, BrainSpan_exonExpr, method = "spearman", adjust = "fdr")
 
-l1 <- get_legend(Otero.all.plots)
+for(event in events) {
+  for(gene in genes) {
+    anno <- rbind(anno,
+                  data.frame(
+                    SE_event_name = event,
+                    geneSymbol = gene,
+                    dataset = "BrainSpan",
+                    label = paste0("R = ", sprintf("%0.3f", round(BrainSpan_corr$r[gene, event], digits = 3)))
+                  )
+    )
+  }
+}    
 
-plot_grid(Otero.all.plots + theme(legend.position = "none"),
-          Otero.DM1.plots + theme(legend.position = "none", axis.text.y = element_blank()),
-          Otero.CTRL.plots + theme(legend.position = "none", axis.text.y = element_blank()),
-          l1,
-          labels = c(""), label_size = 20,
-          ncol = 4, nrow = 1, rel_widths = c(1.65,1.025,1.025,0.4), 
-          scale = c(0.9,0.9,0.9,1))
+# get logCPM values of splicing factor genes
+GTEx_factorExpr <- GTEx_log2CPM %>% 
+  dplyr::select(geneSymbol, log2CPM, sampleID) %>% 
+  spread(geneSymbol, log2CPM) %>% dplyr::select(-sampleID) %>% as.matrix()
 
-ggsave2(filename = "results/Figure_S10.pdf", width = 12, height = 8, dpi = 300)
+# get exon inclusion for DM1/brain related events
+GTEx_exonExpr <- GTEx_psi %>% 
+  dplyr::select(SE_event_name, exonInclusion, sampleID) %>% 
+  spread(SE_event_name, exonInclusion) %>% dplyr::select(-sampleID) %>% as.matrix()
+
+# events with increased inclusion in DM1 followed by events with decreased inclusion
+GTEx_exonExpr <- GTEx_exonExpr[ , match(eventOrder, colnames(GTEx_exonExpr))]
+
+# correlate logCPM values of splicing factors with psi of DM1 events
+GTEx_corr <- psych::corr.test(GTEx_factorExpr, GTEx_exonExpr, method = "spearman", adjust = "fdr")
+
+for(event in events) {
+  for(gene in genes) {
+    anno <- rbind(anno,
+                  data.frame(
+                    SE_event_name = event,
+                    geneSymbol = gene,
+                    dataset = "GTEx",
+                    label = paste0("R = ", sprintf("%0.3f", round(GTEx_corr$r[gene, event], digits = 3)))
+                  )
+    )
+  }
+} 
+
+### SCATTERPLOT ####
+
+anno$x <- 6
+anno$y[anno$SE_event_name == "DMD"] <- 0.95
+anno$y[anno$SE_event_name == "ADD1"] <- 0.02
+
+
+BrainSpan_plotData <- merge(x = BrainSpan_psi %>% 
+                              dplyr::select(sampleID, exonInclusion, SE_event_name, group) %>% 
+                              dplyr::mutate(sampleID = as.character(sampleID)),
+                            y = BrainSpan_log2CPM %>% dplyr::select(sampleID, log2CPM, geneSymbol),
+                            by = "sampleID"
+)
+BrainSpan_plotData$dataset <- "BrainSpan"
+
+Otero_plotData <- merge(x = Otero_psi %>% 
+        dplyr::select(sampleID, exonInclusion, SE_event_name, group) %>% 
+        dplyr::mutate(sampleID = as.character(sampleID)),
+      y = Otero_log2CPM %>% dplyr::select(sampleID, log2CPM, geneSymbol),
+      by = "sampleID"
+)
+Otero_plotData$dataset <- "Otero et al. (2021)"
+
+plotData <- rbind(BrainSpan_plotData, Otero_plotData)
+
+makeScatterplot <- function(data, event, gene, dataset_, colors) {
+  data %>%
+    dplyr::filter(
+      dataset %in% dataset_,
+      geneSymbol %in% gene,
+      SE_event_name %in% event) %>%
+    ggplot() +
+    geom_point(aes(x = log2CPM, y = exonInclusion, colour = group), size = 0.8) +
+    scale_x_continuous(breaks = c(2, 6, 10), limits = c(2,10)) +
+    scale_colour_manual(values = colors) +
+    coord_fixed(ratio = 1) +
+    xlab("log2(CPM)") + ylab(expression(psi)) +
+    ylim(0.0,1.0) + 
+    guides(colour = guide_legend(override.aes = list(size=5))) +
+    theme_classic() +
+    theme(text = element_text(size = 20), 
+          aspect.ratio = 1,
+          legend.title = element_blank(),
+          axis.title.y = element_text(angle = 0, vjust = 0.5),
+          #strip.background = element_rect(color="white", fill="white"),
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          strip.placement = "outside",
+          panel.spacing = unit(2, "lines")) +
+    geom_text(data = dplyr::filter(anno, dataset %in% dataset_), aes(x = x, y = y, label = label), size = 4) +
+    facet_wrap(SE_event_name ~ geneSymbol, ncol = 3) 
+}
+
+plot1 <- makeScatterplot(plotData, 
+                         event = c("ADD1", "DMD"), 
+                         gene = c("CELF1", "MBNL1", "MBNL2"), 
+                         dataset_ = "BrainSpan",
+                         colors = c(colPal$MediumBlue, colPal$Grey)
+)
+plot2 <- makeScatterplot(plotData, 
+                         event = c("ADD1", "DMD"), 
+                         gene = c("CELF1", "MBNL1", "MBNL2"), 
+                         dataset_ = "Otero et al. (2021)",
+                         colors = c(colPal$Red, colPal$Grey)
+)
+
+l_BrainSpan <- get_legend(plot1)
+l_Otero <- get_legend(plot2)
+
+plot_grid(
+  plot1 + theme(legend.position = "none"),
+  plot2 + theme(legend.position = "none"),
+  ncol = 2, labels = "", label_size = 20, scale = c(0.9,0.9)
+)
+
+ggsave2(filename = "results/Figure_S10.pdf", width = 10, height = 6, dpi = 300)
 
